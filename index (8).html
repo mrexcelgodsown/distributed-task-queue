@@ -1,0 +1,233 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed Task Queue Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: #ffffff;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+        body.dark {
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        #app {
+            max-width: 1200px;
+            width: 100%;
+            padding: 20px;
+        }
+        .card {
+            background: #f5f5f5;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: transform 0.2s ease;
+        }
+        .card.dark {
+            background: #2a2a2a;
+            box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+        }
+        .card:hover {
+            transform: translateY(-2px);
+        }
+        button, input {
+            font-family: 'JetBrains Mono', monospace;
+            transition: all 0.3s ease;
+        }
+        button {
+            background: #0078d4;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: none;
+        }
+        button:hover {
+            background: #005ba1;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        .theme-toggle {
+            background: #4a4a4a;
+            color: white;
+        }
+        .theme-toggle.dark {
+            background: #e0e0e0;
+            color: #1a1a1a;
+        }
+        #info {
+            background: #e6f3ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        #info.dark {
+            background: #2a3b4c;
+        }
+        @media (max-width: 768px) {
+            #app {
+                padding: 10px;
+            }
+            .card {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="text/babel">
+        function App() {
+            const [task, setTask] = React.useState('');
+            const [token, setToken] = React.useState('');
+            const [jobs, setJobs] = React.useState([]);
+            const [queueLength, setQueueLength] = React.useState(0);
+            const [info, setInfo] = React.useState('Enter a task to enqueue.');
+            const [isDark, setIsDark] = React.useState(false);
+
+            const login = async () => {
+                try {
+                    const response = await axios.post('http://localhost:8000/login', {
+                        username: 'admin',
+                        password: 'password'
+                    });
+                    setToken(response.data.access_token);
+                    setInfo('Logged in successfully.');
+                } catch (error) {
+                    setInfo('Login failed: ' + error.message);
+                }
+            };
+
+            const enqueueTask = async () => {
+                if (!task) {
+                    setInfo('Please enter a task.');
+                    return;
+                }
+                try {
+                    await axios.post('http://localhost:8000/tasks', { task }, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    setTask('');
+                    setInfo('Task enqueued successfully.');
+                    fetchJobs();
+                } catch (error) {
+                    setInfo('Error enqueuing task: ' + error.message);
+                }
+            };
+
+            const fetchJobs = async () => {
+                try {
+                    const response = await axios.get('http://localhost:8000/tasks', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    setJobs(response.data.tasks);
+                    setQueueLength(response.data.queue_length);
+                } catch (error) {
+                    setInfo('Error fetching jobs: ' + error.message);
+                }
+            };
+
+            const toggleTheme = () => {
+                setIsDark(!isDark);
+                document.body.classList.toggle('dark');
+                setInfo('Theme toggled.');
+            };
+
+            React.useEffect(() => {
+                if (token) fetchJobs();
+            }, [token]);
+
+            return (
+                <div className="w-full">
+                    <h1 className="text-3xl font-bold text-center mb-6">Distributed Task Queue Dashboard</h1>
+                    <div className="flex flex-wrap gap-4 justify-center">
+                        <input
+                            type="text"
+                            value={task}
+                            onChange={(e) => setTask(e.target.value)}
+                            placeholder="Enter task (e.g., send email)"
+                            className="p-2 rounded bg-gray-100 dark:bg-gray-700 dark:text-white"
+                        />
+                        <button onClick={enqueueTask}>Enqueue Task</button>
+                        <button onClick={login}>Login</button>
+                        <button onClick={toggleTheme} className="theme-toggle">
+                            {isDark ? 'Light' : 'Dark'} Theme
+                        </button>
+                    </div>
+                    <div id="info" className={isDark ? 'dark' : ''}>{info}</div>
+                    <div className="card dark">
+                        <h2 className="text-xl font-semibold">Queue Metrics</h2>
+                        <p>Queue Length: {queueLength}</p>
+                    </div>
+                    <div className="card dark">
+                        <h2 className="text-xl font-semibold">Jobs</h2>
+                        <ul className="list-disc pl-5">
+                            {jobs.map((job, index) => (
+                                <li key={index}>
+                                    Task: {job.task}, Status: {job.status}, Result: {job.result || 'Pending'}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('app'));
+    </script>
+</body>
+</html>
